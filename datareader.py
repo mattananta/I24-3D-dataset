@@ -278,7 +278,7 @@ class Data_Reader():
                     if len(row) > 0 and row[0] == "Frame #":
                         HEADERS = False
                         camera_names = row[45]
-        self.cameras = re.findall(r"(p\dc\d)",camera_names)
+                        self.cameras = re.findall(r"(p\dc\d)",camera_names)
                     continue
         
                 else:
