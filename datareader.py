@@ -14,8 +14,16 @@ import numpy as np
 import cv2
 import torch
 
-import PyNvCodec as nvc
-import PytorchNvCodec as pnvc
+try:
+    import PyNvCodec as nvc
+    import PytorchNvCodec as pnvc
+    NVDEC_AVAILABLE = True
+except ImportError:
+    # NVIDIA Video Codec SDK bindings are optional; OpenCV can decode videos
+    # on CPU for dataset export and other non-GPU workflows.
+    nvc = None
+    pnvc = None
+    NVDEC_AVAILABLE = False
 
 
 
@@ -115,7 +123,7 @@ class Camera_Wrapper_vpf():
        
         
         self.frame = None
-        self.name = re.search("p\dc\d",sequence).group(0)
+        self.name = re.search(r"p\dc\d",sequence).group(0)
         
         self.all_ts = []
     
@@ -171,7 +179,7 @@ class Camera_Wrapper():
        
         
         self.frame = None
-        self.name = re.search("p\dc\d",sequence).group(0)
+        self.name = re.search(r"p\dc\d",sequence).group(0)
         
         self.all_ts = []
     
@@ -270,7 +278,7 @@ class Data_Reader():
                     if len(row) > 0 and row[0] == "Frame #":
                         HEADERS = False
                         camera_names = row[45]
-                        self.cameras = re.findall("(p\dc\d)",camera_names)
+        self.cameras = re.findall(r"(p\dc\d)",camera_names)
                     continue
         
                 else:

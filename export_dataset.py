@@ -10,11 +10,25 @@ import time
 import gc
 
 start_time = time.time()
-try:
-    with open("/home/worklab/Documents/datasets/I24-3D/cache/data_summary.cpkl","rb") as f:
-        all_data = pickle.load(f)
-except:
-        all_data = []
+
+
+def available_scene_ids(video_directory):
+    """Return scene numbers whose directories contain at least one video."""
+    video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+    scene_ids = []
+    if not os.path.isdir(video_directory):
+        return scene_ids
+    for entry in os.scandir(video_directory):
+        if not entry.is_dir() or not entry.name.startswith("scene"):
+            continue
+        suffix = entry.name[len("scene"):]
+        if suffix.isdigit() and any(
+            video.is_file()
+            and os.path.splitext(video.name)[1].lower() in video_extensions
+            for video in os.scandir(entry.path)
+        ):
+            scene_ids.append(int(suffix))
+    return sorted(scene_ids)
 
 def create_summary(directories,out_dir):
     all_data = []
@@ -23,8 +37,12 @@ def create_summary(directories,out_dir):
         im_dir    = directory[0]
         label_dir = directory[1]
         
+        if not os.path.isdir(im_dir) or not os.path.isdir(label_dir):
+            continue
         ims = os.listdir(im_dir)
         labels = os.listdir(label_dir)
+        if not ims:
+            continue
           
         if os.path.isdir(os.path.join(im_dir,ims[0])): 
             for cam in ims:
@@ -51,6 +69,8 @@ def create_summary(directories,out_dir):
     print("Saved dataset summary with {} items at {}".format(len(all_data),save_label_path))
 
 def cache_frames(ann,output_directory, start_frame = 0,how_many = 8,append_extra = False,write_frames = True):
+    os.makedirs(output_directory, exist_ok=True)
+    all_data = []
     
     if not append_extra:
         # for each frame idx
@@ -93,7 +113,7 @@ def cache_frames(ann,output_directory, start_frame = 0,how_many = 8,append_extra
                             # separate cab and trailer boxes
                             trailers = []
                             for obj in ts_data:
-                                if obj["cab_length"] > 0:
+                                if obj.get("cab_length", 0) > 0:
                                     item = obj
                                     front = torch.tensor([item["x"]+item["l"]*item["direction"] - item["cab_length"]*item["direction"],item["y"],item["cab_length"],item["w"],item["h"],item["direction"]]).float()
                                     back =  torch.tensor([item["x"],item["y"],item["l"] - item["cab_length"],item["w"],item["h"],item["direction"]]).float()
@@ -163,7 +183,7 @@ def cache_frames(ann,output_directory, start_frame = 0,how_many = 8,append_extra
                     if not os.path.exists(cam_directory):
                             os.mkdir(cam_directory)
                             
-                    label_directory = "{}/label/scene_{}/{}".format(output_directory,scene_id,cam_name)
+                    label_directory = "{}/label/scene_{}/{}".format(output_directory,ann.scene_id,cam_name)
                     if not os.path.exists(label_directory):
                         os.mkdir(label_directory)
                     lab_path = "{}/{}.cpkl".format(label_directory,str(f_idx).zfill(4))
@@ -183,7 +203,7 @@ def cache_frames(ann,output_directory, start_frame = 0,how_many = 8,append_extra
                 ann.next()
             if f_idx % 100 == 0:
                 t_est = time.time() - start_time
-                print("Cached scene {} frame {}, {} fps cache rate".format(scene_id,f_idx,f_idx/t_est))
+                print("Cached scene {} frame {}, {} fps cache rate".format(ann.scene_id,f_idx,f_idx/t_est))
     
             # if f_idx > 10:
             #     break
@@ -206,32 +226,28 @@ def cache_frames(ann,output_directory, start_frame = 0,how_many = 8,append_extra
         pickle.dump(all_data,f)
     
 if __name__ == "__main__":
+    dataset_dir = "/Volumes/IPA/brno/3d-bbox-speed-estimation/I24"
+    video_dir = os.path.join(dataset_dir, "video")
+    data_dir = os.path.join(dataset_dir, "data")
+    out_dir = os.path.join(dataset_dir, "cache")
 
-    video_dir = "/home/worklab/Documents/datasets/I24-3D/video/"
-    data_dir  = "/home/worklab/Documents/datasets/I24-3D/data"
-    out_dir = "/home/worklab/Documents/datasets/I24-3D/cache"
-    
-    if False:
-        for scene_id in [1,2,3]:
-            start_frame = 0
-            ann = Scene(video_dir,data_dir,scene_id = scene_id,start_frame=start_frame)
-            ann.correct_curve()
-            ann.buffer_lim = 10
-            #ann = None
-            cache_frames(ann,output_directory = out_dir,start_frame = start_frame,write_frames = False)
-            del ann
-            gc.collect()
+    scene_ids = available_scene_ids(video_dir)
+    if not scene_ids:
+        raise FileNotFoundError("No scene folders containing videos found in {}".format(video_dir))
 
-    directories = [["/home/worklab/Documents/datasets/I24-3D/cache/im/scene_1","/home/worklab/Documents/datasets/I24-3D/cache/label/scene_1"],
-                   ["/home/worklab/Documents/datasets/I24-3D/cache/im/scene_2","/home/worklab/Documents/datasets/I24-3D/cache/label/scene_2"],
-                   ["/home/worklab/Documents/datasets/I24-3D/cache/im/scene_3","/home/worklab/Documents/datasets/I24-3D/cache/label/scene_3"],
-                   ["/home/worklab/Documents/datasets/more_3D_frames/im"      ,"/home/worklab/Documents/datasets/more_3D_frames/label_export"]]
-    
-    directories = [["/home/worklab/Documents/datasets/3D_for_reece/im/scene_1","/home/worklab/Documents/datasets/3D_for_reece/label/scene_1"],
-                   ["/home/worklab/Documents/datasets/3D_for_reece/im/scene_2","/home/worklab/Documents/datasets/3D_for_reece/label/scene_2"],
-                   ["/home/worklab/Documents/datasets/3D_for_reece/im/scene_3","/home/worklab/Documents/datasets/3D_for_reece/label/scene_3"],
-                   ["/home/worklab/Documents/datasets/3D_for_reece/im/extra","/home/worklab/Documents/datasets/3D_for_reece/label/extra"],]
-    
-    out_dir = "/home/worklab/Documents/datasets/3D_for_reece"
-    #directories = [["/home/worklab/Documents/datasets/more_3D_frames/im"      ,"/home/worklab/Documents/datasets/more_3D_frames/label_export"]]
-    create_summary(directories,out_dir)
+    for scene_id in scene_ids:
+        ann = Scene(video_dir, data_dir, scene_id=scene_id, start_frame=0)
+        ann.correct_curve()
+        # Keep the in-memory video buffer bounded for CPU decoding, especially
+        # when source videos are 4K and the GPU decoder is unavailable.
+        ann.buffer_lim = 10
+        cache_frames(ann, output_directory=out_dir, start_frame=0)
+        del ann
+        gc.collect()
+
+    summary_directories = [
+        (os.path.join(out_dir, "im", "scene_{}".format(scene_id)),
+         os.path.join(out_dir, "label", "scene_{}".format(scene_id)))
+        for scene_id in scene_ids
+    ]
+    create_summary(summary_directories, out_dir)

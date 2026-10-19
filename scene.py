@@ -10,7 +10,7 @@ To whom it may concern:
 """
 
 
-from datareader import Data_Reader, Camera_Wrapper, Camera_Wrapper_vpf
+from datareader import Data_Reader, Camera_Wrapper, Camera_Wrapper_vpf, NVDEC_AVAILABLE
 from homography import Homography_Wrapper
 import _pickle as pickle
 import time
@@ -123,10 +123,15 @@ class Scene:
         self.sequences = {}
         for idx, sequence in enumerate(os.listdir(sequence_directory)):
             if "p3c6" not in sequence or scene_id != 1:
-                cap = Camera_Wrapper_vpf(os.path.join(
-                    sequence_directory, sequence),ctx,ds=1,gpu = np.random.randint(0,3),start_frame = start_frame)
-                # cap = Camera_Wrapper(os.path.join(
-                #     sequence_directory, sequence),ds=1)
+                video_path = os.path.join(sequence_directory, sequence)
+                if NVDEC_AVAILABLE and torch.cuda.is_available():
+                    cap = Camera_Wrapper_vpf(video_path, ctx, ds=1,
+                                             gpu=np.random.randint(0, torch.cuda.device_count()),
+                                             start_frame=start_frame)
+                else:
+                    cap = Camera_Wrapper(video_path, ds=1)
+                    for _ in range(start_frame):
+                        cap.cap.grab()
                 self.sequences[cap.name] = cap
 
         # # get homography
