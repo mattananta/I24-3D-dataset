@@ -20,6 +20,7 @@ If you use this code or data, please cite this work and/or give the repo a star!
 ## Requirements
 To use the dataset itself, there are no specific requirements (data is stored in .csv, .json, and .mp4 formats). To use the basic python scripts provided in this repository, you'll need a few python libraries:
 - `pytorch`
+- `torchcodec` for CUDA accelerated video decoding (`torchcodec` must match the installed PyTorch version; FFmpeg must include NVIDIA NVDEC support)
 - `numpy`
 - `cv2`
 - `motmetrics` (if you want to evaluate tracking results on the dataset). Available at: https://github.com/cheind/py-motmetrics
@@ -116,6 +117,12 @@ The viewing and annotation tool is built more or less without handrails, so will
 
 ## `export_dataset.py` 
 Run this to write the frames of each scene video to disk (more convenient for e.g. training object detectors). Be warned that the image files takes up a lot of space (> 100 GB). Edit the paths to point to the main video and data directories of the dataset on your machine. By default caches 1080p frames.
+
+The exporter uses TorchCodec/NVDEC on CUDA by default. On a CUDA Linux machine, install a TorchCodec build compatible with the installed PyTorch and an FFmpeg build with NVDEC, then run:
+
+    python export_dataset.py --dataset-dir /path/to/I24 --output-dir /path/to/cache --device cuda:0
+
+Use `--device cpu` to force CPU decoding. The exporter prints the selected CUDA device and the decoder fallback status; it stops with an error if TorchCodec falls back to CPU.
     
     from export_dataset import cache_frames, available_scene_ids
     

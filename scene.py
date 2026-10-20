@@ -10,7 +10,7 @@ To whom it may concern:
 """
 
 
-from datareader import Data_Reader, Camera_Wrapper, Camera_Wrapper_vpf, NVDEC_AVAILABLE
+from datareader import Data_Reader, Camera_Wrapper, Camera_Wrapper_torchcodec, TORCHCODEC_AVAILABLE
 from homography import Homography_Wrapper
 import _pickle as pickle
 import time
@@ -31,9 +31,6 @@ import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
 
-
-import torch.multiprocessing as mp
-ctx = mp.get_context('spawn')
 
 # filter and CNNs
 
@@ -65,7 +62,7 @@ class Scene:
          for labels later down the lien
     """
 
-    def __init__(self, video_dir, data_dir, scene_id=1,start_frame = 0):
+    def __init__(self, video_dir, data_dir, scene_id=1,start_frame = 0, device="auto"):
 
         # # get data
         # dr = Data_Reader(data,None,metric = False)
@@ -121,18 +118,39 @@ class Scene:
         # get sequences
         sequence_directory = os.path.join(video_dir,"scene{}".format(scene_id))
         self.sequences = {}
-        for idx, sequence in enumerate(os.listdir(sequence_directory)):
-            if "p3c6" not in sequence or scene_id != 1:
-                video_path = os.path.join(sequence_directory, sequence)
-                if NVDEC_AVAILABLE and torch.cuda.is_available():
-                    cap = Camera_Wrapper_vpf(video_path, ctx, ds=1,
-                                             gpu=np.random.randint(0, torch.cuda.device_count()),
-                                             start_frame=start_frame)
-                else:
-                    cap = Camera_Wrapper(video_path, ds=1)
-                    for _ in range(start_frame):
-                        cap.cap.grab()
-                self.sequences[cap.name] = cap
+        video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+        video_paths = sorted(
+            os.path.join(sequence_directory, filename)
+            for filename in os.listdir(sequence_directory)
+            if os.path.isfile(os.path.join(sequence_directory, filename))
+            and os.path.splitext(filename)[1].lower() in video_extensions
+        )
+        if device == "auto":
+            decode_device = "cuda:0" if torch.cuda.is_available() and TORCHCODEC_AVAILABLE else "cpu"
+        else:
+            decode_device = str(device)
+        if decode_device.startswith("cuda"):
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA decoding requested, but torch.cuda.is_available() is false")
+            if not TORCHCODEC_AVAILABLE:
+                raise RuntimeError("CUDA decoding requested, but TorchCodec is not installed")
+            gpu_index = torch.device(decode_device).index or 0
+            if gpu_index >= torch.cuda.device_count():
+                raise ValueError("CUDA device {} is unavailable".format(decode_device))
+            print("Scene {} video decoding on {} ({})".format(
+                scene_id, decode_device, torch.cuda.get_device_name(gpu_index)))
+        elif decode_device != "cpu":
+            raise ValueError("device must be 'auto', 'cpu', or a CUDA device such as 'cuda:0'")
+
+        for video_path in video_paths:
+            if decode_device.startswith("cuda"):
+                cap = Camera_Wrapper_torchcodec(
+                    video_path, device=decode_device, ds=1, start_frame=start_frame)
+            else:
+                cap = Camera_Wrapper(video_path, ds=1)
+                for _ in range(start_frame):
+                    cap.cap.grab()
+            self.sequences[cap.name] = cap
 
         # # get homography
         # hid = "" if homography_id == 1 else "2"

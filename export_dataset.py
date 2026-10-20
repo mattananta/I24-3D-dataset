@@ -239,6 +239,11 @@ if __name__ == "__main__":
         default=os.environ.get("I24_OUTPUT_DIR", "/output"),
         help="Directory for cached images, labels, and data_summary.cpkl (default: /output)",
     )
+    parser.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Video decode device, e.g. cuda:0; use cpu to disable GPU decoding",
+    )
     args = parser.parse_args()
 
     dataset_dir = args.dataset_dir
@@ -251,7 +256,7 @@ if __name__ == "__main__":
         raise FileNotFoundError("No scene folders containing videos found in {}".format(video_dir))
 
     for scene_id in scene_ids:
-        ann = Scene(video_dir, data_dir, scene_id=scene_id, start_frame=0)
+        ann = Scene(video_dir, data_dir, scene_id=scene_id, start_frame=0, device=args.device)
         ann.correct_curve()
         # Keep the in-memory video buffer bounded for CPU decoding, especially
         # when source videos are 4K and the GPU decoder is unavailable.

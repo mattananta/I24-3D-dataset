@@ -15,156 +15,12 @@ import cv2
 import torch
 
 try:
-    import PyNvCodec as nvc
-    import PytorchNvCodec as pnvc
-    NVDEC_AVAILABLE = True
-except ImportError:
-    # NVIDIA Video Codec SDK bindings are optional; OpenCV can decode videos
-    # on CPU for dataset export and other non-GPU workflows.
-    nvc = None
-    pnvc = None
-    NVDEC_AVAILABLE = False
+    from torchcodec.decoders import VideoDecoder
+    TORCHCODEC_AVAILABLE = True
+except (ImportError, OSError):
+    VideoDecoder = None
+    TORCHCODEC_AVAILABLE = False
 
-
-
-def load_queue_vpf(q,sequence,gpuID,buffer_size,resize,start_frame):
-        print("device id: {}".format(gpuID))
-
-        resize = (resize[1],resize[0])
-        # device = torch.cuda.device("cuda:{}".format(gpuID))
-        file = sequence
-        
-        # initialize Decoder object
-        nvDec = nvc.PyNvDecoder(file, gpuID)
-        target_h, target_w = nvDec.Height(), nvDec.Width()
-    
-        to_rgb = nvc.PySurfaceConverter(nvDec.Width(), nvDec.Height(), nvc.PixelFormat.NV12, nvc.PixelFormat.RGB, gpuID)
-        to_planar = nvc.PySurfaceConverter(nvDec.Width(), nvDec.Height(), nvc.PixelFormat.RGB, nvc.PixelFormat.RGB_PLANAR, gpuID)
-    
-    
-        cspace, crange = nvDec.ColorSpace(), nvDec.ColorRange()
-        if nvc.ColorSpace.UNSPEC == cspace:
-            cspace = nvc.ColorSpace.BT_601
-        if nvc.ColorRange.UDEF == crange:
-            crange = nvc.ColorRange.MPEG
-        cc_ctx = nvc.ColorspaceConversionContext(cspace, crange)
-        
-        
-        # get frames from one file
-        frame_counter = -1
-        while True:
-            if q.qsize() < buffer_size:
-                
-                
-                # Obtain NV12 decoded surface from decoder;
-                raw_surface = nvDec.DecodeSingleSurface()#pkt)
-                if raw_surface.Empty():
-                    break
-                
-                # used to skip to frame 
-                frame_counter += 1
-                if frame_counter < start_frame:
-                    continue
-    
-                # Convert to RGB interleaved;
-                rgb_byte = to_rgb.Execute(raw_surface, cc_ctx)
-            
-                # Convert to RGB planar because that's what to_tensor + normalize are doing;
-                rgb_planar = to_planar.Execute(rgb_byte, cc_ctx)
-    
-
-            
-                # likewise, end of video file
-                if rgb_planar.Empty():
-                    break
-                
-                rgb_planar = rgb_planar.Clone(gpuID)
-                
-                # del rgb_byte
-                
-                # Create torch tensor from it and reshape because
-                # pnvc.makefromDevicePtrUint8 creates just a chunk of CUDA memory
-                # and then copies data from plane pointer to allocated chunk;
-                surfPlane = rgb_planar.PlanePtr()
-                # del rgb_planar
-                
-                surface_tensor = pnvc.makefromDevicePtrUint8(surfPlane.GpuMem(), surfPlane.Width(), surfPlane.Height(), surfPlane.Pitch(), surfPlane.ElemSize())
-                del surfPlane
-                
-                surface_tensor.resize_(3, target_h,target_w)
-                
-                try:
-                    surface_tensor = torch.nn.functional.interpolate(surface_tensor.unsqueeze(0),resize).squeeze(0)
-                except:
-                    raise Exception("Surface tensor shape:{} --- resize shape: {}".format(surface_tensor.shape,resize))
-            
-                # This is optional and depends on what you NN expects to take as input
-                # Normalize to range desired by NN. Originally it's 
-                surface_tensor = surface_tensor.type(dtype=torch.cuda.FloatTensor)
-                surface_tensor = surface_tensor.permute(1,2,0).data.cpu().numpy().astype(np.uint8)[:,:,::-1].copy()
-                
-                # apply normalization
-                #surface_tensor = F.normalize(surface_tensor,mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-                
-                frame = surface_tensor
-                q.put(frame)
-
-class Camera_Wrapper_vpf():
-    """
-    Small wrapper around cv2.VideoCapture object that also maintains timestamp
-    """
-    
-    def __init__(self,sequence,ctx,ds = 2,gpu = 0,start_frame = 0):
-        self.cap = cv2.VideoCapture(sequence)
-        self.ds = ds
-        
-        #checksum_path="/home/worklab/Documents/derek/I24-video-processing/I24-video-ingest/resources/timestamp_pixel_checksum_6.pkl"
-        #geom_path="/home/worklab/Documents/derek/I24-video-processing/I24-video-ingest/resources/timestamp_geometry_4K.pkl"
-       
-        
-        self.frame = None
-        self.name = re.search(r"p\dc\d",sequence).group(0)
-        
-        self.all_ts = []
-    
-        self.running_frame = None
-        
-
-        
-        # create shared queue
-        resize = (3840,2160)
-        self.queue = ctx.Queue()
-        self.worker = ctx.Process(target=load_queue_vpf, args=(self.queue,sequence,gpu,20,resize,start_frame))
-        self.worker.start()   
-         
-    def __next__(self):
-        
-        try:
-            frame = self.queue.get(timeout = 20)
-            im = frame
-            
-        except:
-            im = None
-        
-        self.frame = im
-        
-        if self.running_frame is None:
-            self.running_frame = self.frame
-        else:
-            self.running_frame = 0.95*self.running_frame + 0.05*self.frame
-            
-    def release(self):
-        self.cap.release()
-        
-    def __len__(self):
-        return int(self.cap.get(7))    
-    
-    def skip(self,count):
-        for i in range(count):
-            next(self)
-        next(self)
-    
-        
 class Camera_Wrapper():
     """
     Small wrapper around cv2.VideoCapture object that also maintains timestamp
@@ -211,6 +67,67 @@ class Camera_Wrapper():
         for i in range(count):
             self.cap.grab()
         
+        next(self)
+
+
+class Camera_Wrapper_torchcodec:
+    """Read video frames with TorchCodec's CUDA/NVDEC decoder."""
+
+    def __init__(self, sequence, device="cuda:0", ds=1, start_frame=0):
+        if not TORCHCODEC_AVAILABLE:
+            raise RuntimeError(
+                "GPU video decoding requires TorchCodec. Install a CUDA-enabled "
+                "torch/torchcodec build and FFmpeg with NVDEC support."
+            )
+        self.decoder = VideoDecoder(sequence, device=device)
+        self.frame_count = len(self.decoder)
+        self.position = max(0, int(start_frame))
+        self.ds = ds
+        match = re.search(r"p\dc\d", sequence)
+        if match is None:
+            raise ValueError("Cannot infer camera name from video path: {}".format(sequence))
+        self.name = match.group(0)
+        self.frame = None
+        self.running_frame = None
+        self.all_ts = []
+        self._fallback_checked = False
+        self.device = device
+
+    def __next__(self):
+        if self.position >= self.frame_count:
+            self.frame = None
+            raise StopIteration
+
+        # TorchCodec returns RGB uint8 tensors on the requested CUDA device.
+        frame = self.decoder[self.position]
+        if not self._fallback_checked:
+            self._fallback_checked = True
+            status = self.decoder.cpu_fallback
+            print("Video decode {}: {}".format(self.device, status))
+            if bool(status):
+                raise RuntimeError("TorchCodec fell back to CPU decoding: {}".format(status))
+        if frame.device.type != "cuda":
+            raise RuntimeError("TorchCodec returned a non-CUDA frame on requested device {}".format(self.device))
+
+        self.position += 1
+        frame = frame.permute(1, 2, 0).cpu().numpy()[:, :, ::-1].copy()  # RGB -> OpenCV BGR
+        if self.ds == 2:
+            frame = cv2.resize(frame, (1920, 1080))
+        self.frame = frame
+        self.all_ts.append(-1)
+        if self.running_frame is None:
+            self.running_frame = frame
+        else:
+            self.running_frame = 0.95 * self.running_frame + 0.05 * frame
+
+    def __len__(self):
+        return self.frame_count
+
+    def release(self):
+        self.decoder = None
+
+    def skip(self, count):
+        self.position = min(self.frame_count, self.position + max(0, int(count)))
         next(self)
 
 class Data_Reader():
