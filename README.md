@@ -117,15 +117,31 @@ The viewing and annotation tool is built more or less without handrails, so will
 ## `export_dataset.py` 
 Run this to write the frames of each scene video to disk (more convenient for e.g. training object detectors). Be warned that the image files takes up a lot of space (> 100 GB). Edit the paths to point to the main video and data directories of the dataset on your machine. By default caches 1080p frames.
     
-    from export_dataset import cache_frames
+    from export_dataset import cache_frames, available_scene_ids
     
     video_dir = "/.../I24-3D/video"
     data_dir  = "/.../I24-3D/data"
     out_dir   = "/... /I24-3D/cache"
     
-    for scene_id in [1,2,3]:
+    for scene_id in available_scene_ids(video_dir):
         ann = Scene(video_dir,data_dir,scene_id = scene_id)
         cache_frames(ann,output_directory = out_dir)
+
+### Run the frame exporter in Docker
+
+The Docker image contains the CPU-only exporter dependencies. Mount the dataset read-only and mount a writable output directory separately; video and annotation files stay outside the image.
+
+    docker build -t i24-dataset-exporter .
+
+On macOS, using the dataset path above:
+
+    mkdir -p "/Volumes/IPA/brno/3d-bbox-speed-estimation/I24/cache"
+    docker run --rm \
+      --mount type=bind,source="/Volumes/IPA/brno/3d-bbox-speed-estimation/I24",target=/data/I24,readonly \
+      --mount type=bind,source="/Volumes/IPA/brno/3d-bbox-speed-estimation/I24/cache",target=/output \
+      i24-dataset-exporter
+
+The container finds scene folders that contain videos, writes images and labels under `/output`, and saves `data_summary.cpkl` there. It uses OpenCV video decoding. Training and interactive annotation need additional project-specific dependencies and are outside this image.
 
 
 ## `multitask_dataset.py` 

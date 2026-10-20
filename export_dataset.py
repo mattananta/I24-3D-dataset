@@ -226,10 +226,25 @@ def cache_frames(ann,output_directory, start_frame = 0,how_many = 8,append_extra
         pickle.dump(all_data,f)
     
 if __name__ == "__main__":
-    dataset_dir = "/Volumes/IPA/brno/3d-bbox-speed-estimation/I24"
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Cache I24 video frames and annotations.")
+    parser.add_argument(
+        "--dataset-dir",
+        default=os.environ.get("I24_DATASET_DIR", "/data/I24"),
+        help="Directory containing video/ and data/ (default: /data/I24)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=os.environ.get("I24_OUTPUT_DIR", "/output"),
+        help="Directory for cached images, labels, and data_summary.cpkl (default: /output)",
+    )
+    args = parser.parse_args()
+
+    dataset_dir = args.dataset_dir
     video_dir = os.path.join(dataset_dir, "video")
     data_dir = os.path.join(dataset_dir, "data")
-    out_dir = os.path.join(dataset_dir, "cache")
+    out_dir = args.output_dir
 
     scene_ids = available_scene_ids(video_dir)
     if not scene_ids:
